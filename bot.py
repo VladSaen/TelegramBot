@@ -1,18 +1,16 @@
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+import os
 
-# 🔹 Вставлені дані
-BOT_TOKEN = "8360851970:AAGccVI4BkWHJJHMvTgHMS4a--Rz2NBQlVA"
-ADMIN_ID = 5828362947  # твій Telegram ID
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8360851970:AAGccVI4BkWHJJHMvTgHMS4a--Rz2NBQlVA")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "5828362947"))
 
-# Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Вітаю! 🛠️ Напишіть, що сталося — і я передам це електрику.\n"
         "Можна надіслати текст або фото."
     )
 
-# Обробка повідомлень
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
     user_name = message.from_user.username or message.from_user.first_name
@@ -28,9 +26,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await message.reply_text("✅ Дякую! Заявку передано ⚡")
 
-# Створюємо і запускаємо бот
-app = ApplicationBuilder().token(BOT_TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_message))
-
-app.run_polling()
+if __name__ == "__main__":
+    # Створюємо і запускаємо бот через ApplicationBuilder
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_message))
+    app.run_polling()
