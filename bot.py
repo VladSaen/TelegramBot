@@ -7,7 +7,7 @@ from telegram.ext import (
     MessageHandler, 
     filters, 
     ContextTypes,
-    CallbackQueryHandler # Додано для обробки натискань кнопок
+    CallbackQueryHandler
 )
 from telegram.error import BadRequest
 
@@ -19,6 +19,10 @@ WEBHOOK_URL = os.getenv("RENDER_URL")
 # Визначаємо режим роботи та порт
 IS_WEBHOOK_MODE = bool(WEBHOOK_URL)
 PORT = int(os.environ.get('PORT', 8080))
+
+# --- ГЛОБАЛЬНИЙ СТАН ---
+# Увага: Цей список зберігається лише у пам'яті і скидається при кожному перезапуску сервера (на Render).
+BLOCKED_USERS = set() 
 
 # Налаштування логування
 logging.basicConfig(
@@ -41,10 +45,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Надсилає вітальне повідомлення та кнопки-підказки."""
     logger.info(f"Користувач {update.effective_user.id} запустив /start")
 
-    # Створюємо кнопки-підказки
+    # Створюємо кнопки-підказки для користувача
     keyboard = [
         [InlineKeyboardButton("Надіслати Заявку (Текст)", callback_data='action_text_guide')],
-        [InlineKeyboardButton("Надіслати Фото", callback_data='action_photo_guide')],
+        [InlineKeyboardButton("Надіслати Фото/Медіа", callback_data='action_photo_guide')],
         [InlineKeyboardButton("Про Бота / Допомога", callback_data='action_help_info')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -54,6 +58,88 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Оберіть дію або просто надішліть своє повідомлення чи фото.",
         reply_markup=reply_markup
     )
+
+# Команда /help
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Надсилає довідкову інформацію, різну для адміна та користувача."""
+    user_id = update.effective_user.id
+    if is_admin(user_id):
+        await update.message.reply_text(
+            "👨‍💼 **Інструкції для адміністратора:**\n\n"
+            "1. **Відповідь користувачу:** \n   Натисніть кнопку 'Відповісти' під заявкою, щоб автоматично сформувати команду `/reply <ID>`.\n"
+            "2. **Модерація:** \n   - `/block <ID>`: Заблокувати користувача.\n   - `/unblock <ID>`: Розблокувати користувача.\n"
+            "3. **Статус бота:** \n   Використовуйте `/admin_status` для перевірки налаштувань.\n\n"
+            "4. **Заявки:** Усі повідомлення від користувачів (включно з медіа) автоматично пересилаються сюди."
+        , parse_mode='Markdown')
+    else:
+        # Для звичайного користувача
+        await update.message.reply_text("👋 Щоб дізнатися, як користуватися ботом, натисніть `/start` і скористайтеся кнопками-підказками.")
+
+# Команда /admin_status
+async def admin_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Перевіряє статус конфігурації бота (тільки для адміна)."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Ця команда доступна лише адміністратору.")
+        return
+        
+    status_text = (
+        f"🤖 **Статус Бота (Адміністратор):**\n"
+        f"-----------------------------------\n"
+        f"**BOT_TOKEN:** {'✅ Встановлено' if BOT_TOKEN else '❌ НЕ ВСТАНОВЛЕНО'}\n"
+        f"**ADMIN_ID:** `{ADMIN_ID}` ({'✅ OK' if is_admin(update.effective_user.id) else '❌ ПОМИЛКА ID'})\n"
+        f"**Режим:** {'Webhook' if IS_WEBHOOK_MODE else 'Polling'}\n"
+        f"**URL Webhook:** {'✅ ' + WEBHOOK_URL if IS_WEBHOOK_MODE else '❌ Не використовується'}\n"
+        f"**Заблоковано користувачів:** {len(BLOCKED_USERS)}\n"
+    )
+    await update.message.reply_text(status_text, parse_mode='Markdown')
+
+
+# Команда /block
+async def handle_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Блокує користувача за ID, запобігаючи надсиланню ним нових заявок."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Ця команда доступна лише адміністратору.")
+        return
+        
+    if len(context.args) != 1:
+        await update.message.reply_text("❌ Неправильний формат. Використовуйте: `/block <ID_користувача>`")
+        return
+    
+    try:
+        target_user_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ ID користувача має бути числовим.")
+        return
+
+    if target_user_id in BLOCKED_USERS:
+        await update.message.reply_text(f"❌ Користувач {target_user_id} вже заблокований.")
+    else:
+        BLOCKED_USERS.add(target_user_id)
+        await update.message.reply_text(f"✅ Користувач **`{target_user_id}`** успішно **заблокований**.")
+
+# Команда /unblock
+async def handle_unblock(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Розблоковує користувача за ID."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Ця команда доступна лише адміністратору.")
+        return
+        
+    if len(context.args) != 1:
+        await update.message.reply_text("❌ Неправильний формат. Використовуйте: `/unblock <ID_користувача>`")
+        return
+    
+    try:
+        target_user_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ ID користувача має бути числовим.")
+        return
+
+    if target_user_id in BLOCKED_USERS:
+        BLOCKED_USERS.remove(target_user_id)
+        await update.message.reply_text(f"✅ Користувач **`{target_user_id}`** успішно **розблокований**.")
+    else:
+        await update.message.reply_text(f"❌ Користувач **`{target_user_id}`** не знайдений у списку заблокованих.")
+
 
 # Обробник натискань інлайн-кнопок
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -72,7 +158,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         )
     elif data == 'action_photo_guide':
         await query.edit_message_text(
-            text="📸 **Режим фото**\n\nНадішліть фотографію. Ви можете додати до неї опис (підпис) для кращого розуміння.",
+            text="📸 **Режим фото/медіа**\n\nНадішліть будь-який файл: фотографію, відео, документ, аудіо чи стікер. Ви можете додати до нього опис (підпис) для кращого розуміння.",
             parse_mode='Markdown'
         )
     elif data == 'action_help_info':
@@ -97,7 +183,7 @@ async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 2. Перевірка аргументів: очікуємо /reply <user_id> <text>
     if len(context.args) < 2:
         await update.message.reply_text(
-            "❌ Неправильний формат. Використовуйте: /reply <ID_користувача> <Ваша відповідь>"
+            "❌ Неправильний формат. Використовуйте: `/reply <ID_користувача> <Ваша відповідь>`"
         )
         return
 
@@ -120,12 +206,12 @@ async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=f"👨‍💻 **Відповідь адміністратора:**\n\n{reply_text}",
             parse_mode='Markdown'
         )
-        await update.message.reply_text(f"✅ Відповідь успішно надіслано користувачу {target_user_id}.")
+        await update.message.reply_text(f"✅ Відповідь успішно надіслано користувачу **`{target_user_id}`**.")
 
     except BadRequest as e:
         logger.error(f"Помилка при надсиланні відповіді користувачу {target_user_id}: {e}")
         await update.message.reply_text(
-            f"❌ Помилка: Не вдалося надіслати повідомлення користувачу {target_user_id}. Можливо, він заблокував бот або його ID невірний. ({e})"
+            f"❌ Помилка: Не вдалося надіслати повідомлення користувачу **`{target_user_id}`**. Можливо, він заблокував бот або його ID невірний. ({e})"
         )
     except Exception as e:
         logger.error(f"Невідома помилка при відповіді: {e}")
@@ -138,6 +224,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
     user = message.from_user
     
+    # 0. Перевірка на блокування
+    if user.id in BLOCKED_USERS:
+        # Тихе ігнорування повідомлень від заблокованого користувача
+        logger.info(f"Заблокований користувач {user.id} намагався надіслати повідомлення.")
+        return
+
     # Якщо це повідомлення від самого адміністратора, ігноруємо його, якщо це не /reply
     if is_admin(user.id):
         return
@@ -154,44 +246,49 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = user.username
     display_name = f"@{user_name}" if user_name else user.first_name
     
-    # Створення шаблону повідомлення для адміна
+    # Створення інлайн-кнопки для швидкої відповіді
+    reply_command_text = f"/reply {user.id} "
+    reply_keyboard = [
+        [InlineKeyboardButton("↩️ Відповісти користувачу", switch_inline_query_current_chat=reply_command_text)]
+    ]
+    reply_markup_admin = InlineKeyboardMarkup(reply_keyboard)
+    
+    # Створення шаблону повідомлення для адміна (надсилається окремим текстом)
     admin_notification = (
         f"📩 **НОВА ЗАЯВКА**\n"
         f"👤 **Користувач:** {display_name} (ID: `{user.id}`)\n"
         f"----------------------------------------\n"
-        f"📝 **Зміст:** {(message.caption if message.caption else message.text if message.text else 'Фото без підпису')}\n"
-        f"----------------------------------------\n"
-        f"➡️ **Для відповіді:** `/reply {user.id}` <Ваша відповідь>"
+        f"➡️ **Для відповіді натисніть кнопку під цим або наступним повідомленням.**"
     )
 
     is_success = False
 
-    # Фото (тепер також перевіряємо підпис до фото - message.caption)
-    if message.photo:
-        photo_file = await message.photo[-1].get_file()
+    # Перевіряємо, чи є в повідомленні хоч якийсь вміст для пересилання
+    if message.text or message.photo or message.document or message.video or message.sticker or message.voice or message.audio:
         try:
-            await context.bot.send_photo(
-                chat_id=admin_chat_id,
-                photo=photo_file.file_id,
-                caption=admin_notification,
-                parse_mode='Markdown'
-            )
-            is_success = True
-        except Exception as e:
-            logger.error(f"Помилка при надсиланні фото адміну: {e}")
-
-    # Текст
-    elif message.text:
-        try:
+            # 1. Надсилаємо текстову інформацію про користувача
             await context.bot.send_message(
                 chat_id=admin_chat_id,
                 text=admin_notification,
                 parse_mode='Markdown'
             )
+            
+            # 2. Копіюємо оригінальне повідомлення (текст, фото, стікер, документ і т.д.)
+            # Кнопка відповіді прикріплюється до самого скопійованого вмісту
+            await message.copy_message(
+                chat_id=admin_chat_id,
+                reply_markup=reply_markup_admin
+            )
+            
             is_success = True
+            
+        except BadRequest as e:
+            logger.error(f"Помилка при копіюванні повідомлення: {e}")
+            is_success = False
         except Exception as e:
-            logger.error(f"Помилка при надсиланні тексту адміну: {e}")
-
+            logger.error(f"Невідома помилка при обробці заявки: {e}")
+            is_success = False
+    
     # Відповідь користувачу
     if is_success:
         await message.reply_text("✅ Дякую! Вашу заявку успішно передано адміністратору ⚡")
@@ -218,8 +315,12 @@ def main():
     
     # Додаємо хендлери
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("admin_status", admin_status))
+    app.add_handler(CommandHandler("block", handle_block)) # НОВА КОМАНДА
+    app.add_handler(CommandHandler("unblock", handle_unblock)) # НОВА КОМАНДА
     app.add_handler(CommandHandler("reply", handle_reply)) 
-    app.add_handler(CallbackQueryHandler(handle_callback_query)) # НОВИЙ ХЕНДЛЕР ДЛЯ КНОПОК
+    app.add_handler(CallbackQueryHandler(handle_callback_query)) 
     # Обробляємо ВСІ повідомлення, крім команд
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
 
