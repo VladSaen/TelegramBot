@@ -274,9 +274,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
             # 2. Копіюємо оригінальне повідомлення (текст, фото, стікер, документ і т.д.)
-            # Кнопка відповіді прикріплюється до самого скопійованого вмісту
-            await message.copy_message(
+            # ВИПРАВЛЕНО: Викликаємо copy_message через context.bot
+            await context.bot.copy_message(
                 chat_id=admin_chat_id,
+                from_chat_id=user.id, # ID користувача, звідки копіюємо
+                message_id=message.message_id,
                 reply_markup=reply_markup_admin
             )
             
@@ -286,7 +288,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Помилка при копіюванні повідомлення: {e}")
             is_success = False
         except Exception as e:
-            logger.error(f"Невідома помилка при обробці заявки: {e}")
+            # Виводимо помилку, що виникла, для налагодження
+            logger.error(f"Невідома помилка при обробці заявки: {e}") 
             is_success = False
     
     # Відповідь користувачу
