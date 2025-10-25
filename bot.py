@@ -9,17 +9,24 @@ from telegram.ext import (
     ContextTypes
 )
 
-# Налаштування логування для кращої діагностики
+# --- Налаштування ---
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = os.getenv("ADMIN_ID")
+WEBHOOK_URL = os.getenv("RENDER_URL") # Використовуємо змінну, яку ви вже встановили
+
+# Визначаємо режим роботи. Якщо WEBHOOK_URL є, ми в режимі Webhook.
+IS_WEBHOOK_MODE = bool(WEBHOOK_URL)
+
+# Порт, який надає Render
+PORT = int(os.environ.get('PORT', 8080))
+
+# Налаштування логування
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
-# Токен бота і твій Telegram ID
-# Використовуємо змінні середовища. Hardcode видалено!
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = os.getenv("ADMIN_ID")
+# --------------------
 
 # Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -39,7 +46,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         admin_chat_id = int(ADMIN_ID)
     except (ValueError, TypeError):
-        logger.error("ADMIN_ID не встановлено або має некоректний формат (потрібне ціле число).")
+        logger.error("ADMIN_ID не встановлено або має некоректний формат.")
         await message.reply_text("❌ Помилка конфігурації бота. Адміністратор не знайдений.")
         return
 
@@ -72,36 +79,52 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Відповідь користувачу
     await message.reply_text("✅ Дякую! Заявку передано ⚡")
 
-def main():
-    """Запускає бот."""
-    if not BOT_TOKEN:
-        logger.critical("BOT_TOKEN не встановлено. Бот не може запуститися.")
-        print("ПОМИЛКА: Змінна середовища BOT_TOKEN має бути встановлена.")
-        return
 
-    if not ADMIN_ID:
-        logger.critical("ADMIN_ID не встановлено. Бот не може запуститися.")
-        print("ПОМИЛКА: Змінна середовища ADMIN_ID має бути встановлена.")
+async def pre_run(app):
+    """Функція, яка виконується перед запуском Webhook."""
+    if IS_WEBHOOK_MODE and WEBHOOK_URL:
+        # ПРИМУСОВЕ ВИДАЛЕННЯ СТАРОГО WEBHOOK
+        logger.info("Спроба видалити будь-який старий Webhook...")
+        await app.bot.delete_webhook()
+        logger.info("Старий Webhook видалено (якщо він був).")
+
+
+def main():
+    """Ініціалізує та запускає бот (Webhook для Render, Polling в іншому випадку)."""
+    if not BOT_TOKEN or not ADMIN_ID:
+        logger.critical("BOT_TOKEN або ADMIN_ID не встановлено. Перевірте змінні середовища.")
         return
         
-    logger.info("Ініціалізація бота...")
+    app = ApplicationBuilder().token(BOT_TOKEN).post_init(pre_run).build()
     
-    try:
-        # Створюємо додаток
-        # ApplicationBuilder().token(BOT_TOKEN).build() - це правильний спосіб у ptb v20+
-        app = ApplicationBuilder().token(BOT_TOKEN).build()
-    except Exception as e:
-        logger.critical(f"Помилка при ініціалізації ApplicationBuilder: {e}")
-        return
-
     # Додаємо хендлери
     app.add_handler(CommandHandler("start", start))
-    # filters.ALL & ~filters.COMMAND - це правильно для обробки всіх повідомлень, крім команд
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
 
-    logger.info("Бот запущено (Polling mode)...")
-    # Запускаємо бот
-    app.run_polling()
+    # --- ЛОГІКА ЗАПУСКУ ---
+    if IS_WEBHOOK_MODE:
+        # Режим Webhook для продакшен-середовища (Render)
+        full_webhook_url = WEBHOOK_URL.rstrip('/') + '/' + BOT_TOKEN
+        
+        logger.info(f"✅ Режим WEBHOOK. Порт: {PORT}. URL: {full_webhook_url}")
+        
+        # Це дозволяє Application працювати як ASGI-застосунок, який може приймати запити від Render.
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=BOT_TOKEN,
+            webhook_url=full_webhook_url
+        )
+
+    else:
+        # Режим Polling для локальної розробки (це те, що у вас зараз відбувається на Render)
+        logger.info("❌ Режим POLLING. Не знайдено RENDER_URL для Webhook.")
+        # Щоб уникнути Conflict error, ми не будемо запускати Polling на Render
+        # Якщо Render_URL не встановлено, логіка Webhook не спрацьовує, і бот просто завершить роботу
+        # Це запобігає зависанню служби Render.
+        
+        # app.run_polling(poll_interval=10) # Закоментуємо, щоб не конфліктувати
+        logger.info("Бот не запущено в режимі Polling для уникнення помилок Render.")
 
 if __name__ == "__main__":
     main()
