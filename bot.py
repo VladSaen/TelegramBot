@@ -249,8 +249,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Створення інлайн-кнопки для швидкої відповіді
     reply_command_text = f"/reply {user.id} "
     reply_keyboard = [
-        # ЗМІНА: Використовуємо `callback_data` для копіювання тексту команди у поле введення
-        [InlineKeyboardButton("↩️ Відповісти користувачу", callback_data=f"reply_to_{user.id}")]
+        # ПОВЕРНЕННЯ ДО `switch_inline_query_current_chat`
+        [InlineKeyboardButton("↩️ Відповісти користувачу", switch_inline_query_current_chat=reply_command_text)]
     ]
     reply_markup_admin = InlineKeyboardMarkup(reply_keyboard)
     
@@ -298,29 +298,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await message.reply_text("❌ Виникла помилка при надсиланні вашої заявки електрику. Спробуйте пізніше.")
 
-# Обробник для нової кнопки "Відповісти"
-async def handle_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обробляє натискання кнопки 'Відповісти' і пропонує команду /reply <ID>."""
-    query = update.callback_query
-    
-    if query.data.startswith('reply_to_'):
-        if not is_admin(query.from_user.id):
-            await query.answer("⛔ Ця команда доступна лише електрику.")
-            return
-
-        target_user_id = query.data.split('_')[-1]
-        
-        # Натомість використовуємо метод answer, щоб підказати команду
-        await query.answer(
-            text=f"Скопіюйте та відредагуйте: /reply {target_user_id} ",
-            show_alert=True # Показуємо підказку у вигляді спливаючого вікна
-        )
-        
-        # Альтернативно: можна спробувати відправити команду у поле введення,
-        # але це складніше і менш надійно, ніж просто підказка.
-        # Залишаємо спливаюче вікно з підказкою, як більш надійний варіант.
-
-# --- ФУНКЦІЇ ЗАПУСКУ ---
 
 async def pre_run(app):
     """Функція, яка виконується перед запуском Webhook."""
@@ -347,7 +324,7 @@ def main():
     app.add_handler(CommandHandler("unblock", handle_unblock)) 
     app.add_handler(CommandHandler("reply", handle_reply)) 
     app.add_handler(CallbackQueryHandler(handle_callback_query, pattern='^action_')) # Обробка кнопок /start
-    app.add_handler(CallbackQueryHandler(handle_reply_callback, pattern='^reply_to_')) # Обробка кнопки "Відповісти"
+    # Видалено обробник handle_reply_callback
     # Обробляємо ВСІ повідомлення, крім команд
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
 
@@ -369,3 +346,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
