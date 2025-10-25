@@ -1,12 +1,13 @@
 import os
 import logging
-from telegram import Update
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     ApplicationBuilder, 
     CommandHandler, 
     MessageHandler, 
     filters, 
-    ContextTypes
+    ContextTypes,
+    CallbackQueryHandler # Додано для обробки натискань кнопок
 )
 from telegram.error import BadRequest
 
@@ -37,11 +38,52 @@ def is_admin(user_id):
 
 # Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Надсилає вітальне повідомлення."""
+    """Надсилає вітальне повідомлення та кнопки-підказки."""
     logger.info(f"Користувач {update.effective_user.id} запустив /start")
+
+    # Створюємо кнопки-підказки
+    keyboard = [
+        [InlineKeyboardButton("Надіслати Заявку (Текст)", callback_data='action_text_guide')],
+        [InlineKeyboardButton("Надіслати Фото", callback_data='action_photo_guide')],
+        [InlineKeyboardButton("Про Бота / Допомога", callback_data='action_help_info')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
     await update.message.reply_text(
-        "Привіт! ⚡ Надішліть заявку, фото або питання, і я передам це адміністратору."
+        "Привіт! ⚡ Я ваш асистент для зв'язку з адміністратором. "
+        "Оберіть дію або просто надішліть своє повідомлення чи фото.",
+        reply_markup=reply_markup
     )
+
+# Обробник натискань інлайн-кнопок
+async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обробляє натискання інлайн-кнопок з вітального повідомлення."""
+    query = update.callback_query
+    # Відповідаємо на запит, щоб прибрати "годинник" на кнопці
+    await query.answer() 
+
+    data = query.data
+    
+    # Редагуємо повідомлення відповідно до натиснутої кнопки
+    if data == 'action_text_guide':
+        await query.edit_message_text(
+            text="✍️ **Режим текстової заявки**\n\nПросто напишіть своє повідомлення або питання. Я відразу передам його адміністратору.",
+            parse_mode='Markdown'
+        )
+    elif data == 'action_photo_guide':
+        await query.edit_message_text(
+            text="📸 **Режим фото**\n\nНадішліть фотографію. Ви можете додати до неї опис (підпис) для кращого розуміння.",
+            parse_mode='Markdown'
+        )
+    elif data == 'action_help_info':
+        help_text = (
+            "ℹ️ **Інформація про бота**\n\n"
+            "Цей бот слугує для анонімної передачі заявок та питань адміністратору. "
+            "Адміністратор отримує ваше повідомлення та може відповісти вам через бота.\n\n"
+            "**Важливо:** Ваш Telegram ID передається адміністратору для забезпечення можливості відповіді."
+        )
+        await query.edit_message_text(text=help_text, parse_mode='Markdown')
+
 
 # Команда /reply для відповіді адміністратора
 async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -75,7 +117,8 @@ async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_message(
             chat_id=target_user_id,
-            text=f"👨‍💻 Відповідь адміністратора:\n\n{reply_text}"
+            text=f"👨‍💻 **Відповідь адміністратора:**\n\n{reply_text}",
+            parse_mode='Markdown'
         )
         await update.message.reply_text(f"✅ Відповідь успішно надіслано користувачу {target_user_id}.")
 
@@ -113,23 +156,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Створення шаблону повідомлення для адміна
     admin_notification = (
-        f"📩 ЗАЯВКА від {display_name} (ID: {user.id}):\n"
+        f"📩 **НОВА ЗАЯВКА**\n"
+        f"👤 **Користувач:** {display_name} (ID: `{user.id}`)\n"
         f"----------------------------------------\n"
-        f"{(message.text if message.text else 'Фото')}\n"
+        f"📝 **Зміст:** {(message.caption if message.caption else message.text if message.text else 'Фото без підпису')}\n"
         f"----------------------------------------\n"
-        f"Щоб відповісти: /reply {user.id} <Ваша відповідь>"
+        f"➡️ **Для відповіді:** `/reply {user.id}` <Ваша відповідь>"
     )
 
     is_success = False
 
-    # Фото
+    # Фото (тепер також перевіряємо підпис до фото - message.caption)
     if message.photo:
         photo_file = await message.photo[-1].get_file()
         try:
             await context.bot.send_photo(
                 chat_id=admin_chat_id,
                 photo=photo_file.file_id,
-                caption=admin_notification
+                caption=admin_notification,
+                parse_mode='Markdown'
             )
             is_success = True
         except Exception as e:
@@ -140,7 +185,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 chat_id=admin_chat_id,
-                text=admin_notification
+                text=admin_notification,
+                parse_mode='Markdown'
             )
             is_success = True
         except Exception as e:
@@ -148,9 +194,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Відповідь користувачу
     if is_success:
-        await message.reply_text("✅ Дякую! Заявку передано ⚡")
+        await message.reply_text("✅ Дякую! Вашу заявку успішно передано адміністратору ⚡")
     else:
-        await message.reply_text("❌ Виникла помилка при надсиланні вашої заявки адміністратору.")
+        await message.reply_text("❌ Виникла помилка при надсиланні вашої заявки адміністратору. Спробуйте пізніше.")
 
 
 async def pre_run(app):
@@ -172,7 +218,8 @@ def main():
     
     # Додаємо хендлери
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("reply", handle_reply)) # НОВИЙ ХЕНДЛЕР ДЛЯ ВІДПОВІДІ
+    app.add_handler(CommandHandler("reply", handle_reply)) 
+    app.add_handler(CallbackQueryHandler(handle_callback_query)) # НОВИЙ ХЕНДЛЕР ДЛЯ КНОПОК
     # Обробляємо ВСІ повідомлення, крім команд
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
 
